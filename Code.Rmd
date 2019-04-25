@@ -1,0 +1,359 @@
+#Setup
+```{r}
+library(MatchIt)
+library(Zelig)
+library(rbounds)
+
+#attach("datamatch.Rdata")
+
+outcomes <- datamatch[10:18]
+
+outcomes.lbls <- names(outcomes)
+
+n.outcomes <- dim(outcomes)[2]
+```
+
+#Table 1 Replication
+```{r}
+#_________________________________ Table 1 _________________________________#
+
+tab1 <- matrix(NA, nrow = n.outcomes, ncol = 6)
+rownames(tab1) <- outcomes.lbls
+colnames(tab1) <- c("N", "prop.all", "prop.ev", "prop.tv", "diff", "pvalue")
+
+for (i in 1:n.outcomes) {
+  tab1[i, 1] <- length(na.omit(outcomes[, i]))
+  tab1[i, 2] <- prop.table(table(outcomes[, i]))[2] * 100	
+  tab1[i, 3:4] <- rev(prop.table(table(outcomes[, i], datamatch$EV), 2)[2, ]) * 100
+  tab1[i, 5] <- tab1[i, 3] - tab1[i, 4]	
+  tab1[i, 6] <- prop.test(table(outcomes[, i], datamatch$EV)[2, ], n = apply(table(outcomes[, i], datamatch$EV), 2, sum))$p.value
+}
+
+tab1 <- tab1[rev(order(tab1[, "diff"])), ]
+
+### Table 1 ###
+
+print(tab1, digits = 4)
+
+#___________________________________________________________________________#
+
+# Drop observations with missing values in covariates
+
+datamatch[, 10:18][is.na(datamatch[, 10:18]) == "TRUE"] <- 99999
+datamatch <- na.omit(datamatch)
+```
+
+#Table 2, pre-matching replication
+```{r}
+#__________________________ Table 2, pre-matching __________________________#
+
+EV <- datamatch[2]
+
+covariates <- datamatch[c("age.group", "educ", "white.collar", "not.full.time", "male", "tech", "pol.info")]
+covariate.lbls <- names(covariates)
+
+n.covariates <- dim(covariates)[2]
+
+tab2.pre <- matrix(NA, nrow = n.covariates, ncol = 4)
+rownames(tab2.pre) <- covariate.lbls
+colnames(tab2.pre) <- c("ev", "tv", "diff", "pvalue")
+
+tab2.pre[, 1:2] <- cbind(apply(covariates[EV == 1,], 2, mean), apply(covariates[EV == 0,], 2, mean))
+tab2.pre[, 3] <- tab2.pre[, 1] - tab2.pre[, 2]
+
+for (i in c(1, 2, 6, 7)){
+  tab2.pre[i, 4] <- ks.boot(covariates[, i][EV == 1], covariates[, i][EV == 0], nboots = 500)$ks.boot.pvalue
+}
+for (i in c(3, 4, 5)){
+  tab2.pre[i, 4] <- prop.test(table(covariates[, i], EV$EV), n = apply(table(covariates[,i],EV$EV),2, sum))$p.value
+}
+
+```
+
+#Table 3, pre-matching replication
+```{r}
+#__________________________ Table 3, pre-matching __________________________#
+
+datamatch[datamatch == 99999] <- NA
+
+outcomes.pre <- datamatch[10:18]
+
+tab3.pre <- matrix(NA,nrow = n.outcomes,ncol = 5)
+rownames(tab3.pre) <- outcomes.lbls
+colnames(tab3.pre) <- c("N", "prop.ev", "prop.tv", "diff", "pvalue")
+
+for (i in 1:n.outcomes) {
+  tab3.pre[i, 1] <- length(na.omit(outcomes.pre[, i]))
+  tab3.pre[i, 2:3] <- rev(prop.table(table(outcomes.pre[,i],datamatch$EV),2)[2,])*100
+  tab3.pre[i, 4] <- tab3.pre[i, 2] - tab3.pre[i, 3]	
+  tab3.pre[i, 5] <- prop.test(table(outcomes.pre[, i], datamatch$EV)[2, ], n = apply(table(outcomes.pre[, i], datamatch$EV), 2, sum))$p.value
+}
+
+datamatch[, 10:18][is.na(datamatch[, 10:18]) == "TRUE"] <- 99999
+```
+
+#Propensity score Matching
+```{r}
+#__________________________ Matching (with MatchIt) ________________________#
+
+print("Matching")
+
+set.seed(36466)
+
+m.out <- matchit(EV ~ age.group + I(age.group^2) + I(age.group^3) + age.group:educ + age.group:tech + educ + I(educ^2) + tech + I(tech^2) + pol.info + educ:pol.info + age.group:pol.info + tech:pol.info + white.collar + not.full.time + male, caliper = 0.05, data = datamatch, method = "nearest", verbose = "TRUE")
+
+#save(m.out, file = "m.out.Rdata")
+
+#print("Balance Improvement")
+#print(summary(m.out))
+
+#pdf("balance.pdf")
+
+#plot(m.out)
+#plot(m.out, type = "hist")
+#plot(m.out, type = "jitter")
+
+#dev.off()
+
+#___________________________________________________________________________#
+```
+
+#Matched sample
+```{r}
+# matched sample
+
+datamatched <- match.data(m.out)
+datamatched[datamatched == 99999] <- NA
+
+save(datamatched, file = "datamatched.Rdata")
+```
+
+#Table 2, post-matching replication
+```{r}
+#__________________________ Table 2, post-matching _________________________#
+
+EV.post <- datamatched[2]
+
+covariates.post <- datamatched[, covariate.lbls]
+
+tab2.post <- matrix(NA, nrow = n.covariates, ncol = 4)
+rownames(tab2.post) <- covariate.lbls
+colnames(tab2.post) <- c("ev", "tv", "diff", "pvalue")
+
+tab2.post[, 1:2] <- cbind(apply(covariates.post[EV.post == 1, ], 2, mean), apply(covariates.post[EV.post == 0,], 2, mean))
+tab2.post[, 3] <- tab2.post[, 1] - tab2.post[, 2]
+for (i in c(1, 2, 6 , 7)){
+  tab2.post[i, 4]<-ks.boot(covariates.post[,i][EV.post==1],covariates.post[,i][EV.post==0], nboots = 500)$ks.boot.pvalue
+}
+for (i in c(3, 4, 5)){
+  tab2.post[i, 4] <- prop.test(table(covariates.post[, i], EV.post$EV), n = apply(table(covariates.post[, i], EV.post$EV),2 , sum))$p.value
+}
+
+tab2 <- cbind(tab2.pre, tab2.post)
+tab2[3:5, c(1:3, 5:7)] <- tab2[3:5, c(1:3, 5:7)] * 100
+
+### Table 2 ###
+
+print(tab2, digits = 4)
+```
+
+#Table 3, post-matching replication
+```{r}
+#__________________________ Table 3, post-matching _________________________#
+
+outcomes.post <- datamatched[10:18]
+
+tab3.post <- matrix(NA, nrow = n.outcomes, ncol = 5)
+rownames(tab3.post) <- outcomes.lbls
+colnames(tab3.post) <- c("N", "prop.ev", "prop.tv", "diff", "pvalue")
+
+for (i in 1:n.outcomes) {
+  tab3.post[i, 1] <- length(na.omit(outcomes.post[, i]))
+  tab3.post[i, 2:3] <- rev(prop.table(table(outcomes.post[, i], datamatched$EV), 2)[2, ]) * 100
+  tab3.post[i, 4] <- tab3.post[i, 2] - tab3.post[i, 3]	
+  tab3.post[i, 5] <- prop.test(table(outcomes.post[, i], datamatched$EV)[2, ], n = apply(table(outcomes.post[, i], datamatched$EV), 2, sum))$p.value
+}
+
+tab3 <- cbind(tab3.pre, tab3.post)
+
+tab3 <- tab3[rev(order(tab3[, 9])), ]
+
+### Table 3 ###
+
+print(tab3, digits = 4)
+```
+
+
+#Table 3, but with Genetic Matching
+```{r}
+#Setup
+library(Matching)
+
+set.seed(1234)
+
+#Covariates
+X=cbind(datamatch$age.group, 
+        I(datamatch$age.group^2),
+        I(datamatch$age.group^3), 
+        I(datamatch$age.group*datamatch$educ), 
+        I(datamatch$age.group*datamatch$tech), 
+        datamatch$educ, 
+        I(datamatch$educ^2), 
+        datamatch$tech, 
+        I(datamatch$tech^2), 
+        datamatch$pol.info, 
+        I(datamatch$educ*datamatch$pol.info), 
+        I(datamatch$age.group*datamatch$pol.info), 
+        I(datamatch$tech*datamatch$pol.info), 
+        datamatch$white.collar, 
+        datamatch$not.full.time, 
+        datamatch$male)
+
+#Outcomes
+goutcomes=cbind(datamatch$eselect.cand,
+                datamatch$eval.voting,
+                datamatch$easy.voting,
+                datamatch$agree.evoting,
+                datamatch$how.clean,
+                datamatch$sure.counted,
+                datamatch$capable.auth,
+                datamatch$speed,
+                datamatch$conf.secret) 
+
+
+#GenMatch
+gmat2<-GenMatch(Tr=datamatch$EV, X=X, pop.size = 200, caliper = 0.05)
+
+
+#Mtching no Y
+gmout2 <- Match(Tr=datamatch$EV,X=X,Weight.matrix = gmat2, caliper = 0.05)
+
+#summary(gmout2)
+
+
+#Balance
+gbal2 <- MatchBalance(datamatch$EV~datamatch$age.group + I(datamatch$age.group^2) + I(datamatch$age.group^3) + I(datamatch$age.group*datamatch$educ) + I(datamatch$age.group*datamatch$tech) + datamatch$educ + I(datamatch$educ^2) + datamatch$tech + I(datamatch$tech^2) + datamatch$pol.info + I(datamatch$educ*datamatch$pol.info) + I(datamatch$age.group*datamatch$pol.info) + I(datamatch$tech*datamatch$pol.info) + datamatch$white.collar + datamatch$not.full.time + datamatch$male, match.out = gmout2, nboots = 500)
+
+
+```
+
+#Preparation for the table
+```{r}
+#Organizing the data
+
+gencov <- rbind(X[gmout2$index.treated,],X[gmout2$index.control,])
+gencov <- gencov[,c(1,6,8,10,14,15,16)]
+colnames(gencov) <- c("age.group","educ","tech","pol.info","white.collar","not.full.time","male")
+
+genoutc <- rbind(goutcomes[gmout2$index.treated,],goutcomes[gmout2$index.control,])
+genoutc[genoutc == 99999] <- NA
+colnames(genoutc) <- c("eselect.cand","eval.voting","easy.voting","agree.evoting","how.clean","sure.counted","capable.auth","speed","conf.secret")
+
+EV <- datamatch$EV[c(gmout2$index.treated,gmout2$index.control)]
+
+genres <- cbind(EV,gencov,genoutc)
+genres[genres == 99999] <- NA
+  
+```
+
+#New Table
+```{r}
+#__________________________ Table ______________________________#
+
+GenTab <- matrix(NA, nrow = n.outcomes, ncol = 5)
+rownames(GenTab) <- c("Select candidates electronically",
+                      "Evaluation of voting experience",
+                      "Ease of voting procedure",
+                      "Agree substitute TV by EV",
+                      "Elections in Salta are Clean",
+                      "Sure vote was counted",
+                      "Qualification of poll workers",
+                      "Speed of voting process",
+                      "Confident ballot secret")
+colnames(GenTab) <- c("N", "EV (%)", "TV (%)", "Diff.", "p-value")
+
+for (i in 1:n.outcomes) {
+  GenTab[i, 1] <- length(na.omit(genoutc[, i]))
+  GenTab[i, 2:3] <- rev(prop.table(table(genoutc[, i], genres[,1]), 2)[2, ]) * 100
+  GenTab[i, 4] <- GenTab[i, 2] - GenTab[i, 3]	
+  GenTab[i, 5] <- prop.test(table(genoutc[, i], genres[,1])[2, ], n = apply(table(genoutc[, i], genres[,1]), 2, sum))$p.value
+}
+
+
+### Table Gen ###
+
+print(GenTab, digits = 4)
+
+#write.csv(GenTab,"genmatch.csv")
+```
+
+#Table 5 replication
+```{r}
+#_______________________ Table 5, Sensitivity analysis _____________________#
+
+matched.pairs <- NULL
+matched.pairs1 <- NULL
+matched.pairs2 <- NULL
+bin <- NULL
+tab5 <- NULL
+
+for (i in 1:n.outcomes) {
+  matched.pairs[[i]] <- cbind(datamatch[row.names(m.out$match.matrix), rownames(tab3)[i]], datamatch[m.out$match.matrix, rownames(tab3)[i]])
+  matched.pairs[[i]] <- data.frame(na.omit(matched.pairs[[i]]))
+  matched.pairs1[[i]] <- subset(matched.pairs[[i]], matched.pairs[[i]][, 1] != matched.pairs[[i]][, 2] & matched.pairs[[i]][, 2] == 1)
+  matched.pairs2[[i]] <- subset(matched.pairs[[i]], matched.pairs[[i]][, 1] != matched.pairs[[i]][, 2] & matched.pairs[[i]][, 2] == 0)
+  bin[[i]] <- binarysens(x = dim(matched.pairs1[[i]])[1], y = dim(matched.pairs2[[i]])[1], Gamma = 3.0, GammaInc = 0.1)
+}
+   
+# In the case of confidence in ballot secrecy, reverse the order of the counts in binarysens (because effect is negative)
+
+bin[[9]]<-binarysens(y = dim(matched.pairs1[[i]])[1],x = dim(matched.pairs2[[i]])[1],Gamma = 3.0,GammaInc = 0.1)
+
+for (i in 1:n.outcomes) {
+  tab5<-cbind(tab5, as.matrix(bin[[i]]$bounds[, 2:3]))
+}
+
+### Table 5 ###
+
+print(tab5, digits = 2)
+
+#write.csv(data.frame(tab5),"tab5rep.csv") 
+```
+
+
+
+
+#Sensitivity Test Table after GenMatch
+```{r}
+#_______________________ Table, Sensitivity analysis _____________________#
+
+matched.pairs <- NULL
+matched.pairs1 <- NULL
+matched.pairs2 <- NULL
+bin <- NULL
+tab5 <- NULL
+
+for (i in 1:n.outcomes) {
+  matched.pairs[[i]] <- cbind(datamatch[gmout2$index.treated, rownames(tab3)[i]], datamatch[gmout2$index.control,rownames(tab3)[i]])
+  matched.pairs[[i]] <- data.frame(na.omit(matched.pairs[[i]]))
+  matched.pairs1[[i]] <- subset(matched.pairs[[i]], matched.pairs[[i]][, 1] != matched.pairs[[i]][, 2] & matched.pairs[[i]][, 2] == 1)
+  matched.pairs2[[i]] <- subset(matched.pairs[[i]], matched.pairs[[i]][, 1] != matched.pairs[[i]][, 2] & matched.pairs[[i]][, 2] == 0)
+  bin[[i]] <- binarysens(x = dim(matched.pairs1[[i]])[1], y = dim(matched.pairs2[[i]])[1], Gamma = 3.0, GammaInc = 0.1)
+}
+   
+# In the case of confidence in ballot secrecy, reverse the order of the counts in binarysens (because effect is negative)
+
+bin[[9]]<-binarysens(y = dim(matched.pairs1[[i]])[1],x = dim(matched.pairs2[[i]])[1],Gamma = 3.0,GammaInc = 0.1)
+
+for (i in 1:n.outcomes) {
+  tab5<-cbind(tab5, as.matrix(bin[[i]]$bounds[, 2:3]))
+}
+
+### Table ###
+
+print(tab5, digits = 2)
+
+#write.csv(data.frame(tab5),"senstab.csv") 
+
+```
+
